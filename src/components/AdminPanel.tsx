@@ -35,6 +35,9 @@ export const AdminPanel: React.FC<Props> = ({
   const [activeSubTab, setActiveSubTab] = useState<'notes' | 'syllabus' | 'students' | 'stats'>('notes');
   const [searchQuery, setSearchQuery] = useState('');
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [confirmDeleteNoteId, setConfirmDeleteNoteId] = useState<string | null>(null);
+  const [confirmDeleteStudentUser, setConfirmDeleteStudentUser] = useState<string | null>(null);
+  const [deletingStudent, setDeletingStudent] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
 
   // Syllabus state
@@ -93,12 +96,8 @@ export const AdminPanel: React.FC<Props> = ({
     loadStudents();
   }, []);
 
-  // Delete note handler
+  // Delete note handler (works reliably without iframe-blocked window.confirm)
   const handleDeleteNote = async (note: SubjectNote) => {
-    if (!window.confirm(`Are you sure you want to permanently delete "${note.title} (${note.code})"? This will remove it from the website and Supabase database.`)) {
-      return;
-    }
-
     setDeletingId(note.id);
     setActionMessage(null);
     try {
@@ -108,7 +107,8 @@ export const AdminPanel: React.FC<Props> = ({
       const data = await res.json();
       if (res.ok) {
         onNoteDeleted(note.id);
-        setActionMessage(`Note "${note.title}" was permanently removed.`);
+        setConfirmDeleteNoteId(null);
+        setActionMessage(`Note "${note.title} (${note.code})" was permanently deleted.`);
       } else {
         throw new Error(data.error || 'Failed to delete note');
       }
@@ -120,10 +120,32 @@ export const AdminPanel: React.FC<Props> = ({
     }
   };
 
+  // Delete student handler
+  const handleRemoveStudent = async (username: string) => {
+    setDeletingStudent(username);
+    setActionMessage(null);
+    try {
+      const res = await fetch(`/api/admin/users/${encodeURIComponent(username)}`, {
+        method: 'DELETE',
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setStudents((prev) => prev.filter((s) => s.username.toLowerCase() !== username.toLowerCase()));
+        setConfirmDeleteStudentUser(null);
+        setActionMessage(`Student account "${username}" was removed from database.`);
+      } else {
+        throw new Error(data.error || 'Failed to remove student');
+      }
+    } catch (err: any) {
+      setActionMessage(`Error: ${err.message}`);
+    } finally {
+      setDeletingStudent(null);
+      setTimeout(() => setActionMessage(null), 4000);
+    }
+  };
+
   // Delete syllabus handler
   const handleDeleteSyllabus = async (code: string) => {
-    if (!window.confirm(`Permanently delete syllabus for "${code}"?`)) return;
-
     try {
       const res = await fetch(`/api/syllabus/${encodeURIComponent(code)}`, {
         method: 'DELETE',
@@ -352,15 +374,33 @@ export const AdminPanel: React.FC<Props> = ({
                         {note.pdfFileName || (note.pdfDataUrl ? 'PDF attached' : 'Web modules')}
                       </td>
                       <td className="py-3 px-4 text-right">
-                        <button
-                          onClick={() => handleDeleteNote(note)}
-                          disabled={deletingId === note.id}
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-bold transition-all cursor-pointer disabled:opacity-50"
-                          title="Delete this note permanently"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                          <span>{deletingId === note.id ? 'Deleting...' : 'Delete'}</span>
-                        </button>
+                        {confirmDeleteNoteId === note.id ? (
+                          <div className="inline-flex items-center gap-1.5 justify-end">
+                            <button
+                              onClick={() => handleDeleteNote(note)}
+                              disabled={deletingId === note.id}
+                              className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-[11px] font-extrabold shadow-sm transition-all cursor-pointer animate-pulse"
+                            >
+                              {deletingId === note.id ? 'Deleting...' : 'Confirm Delete?'}
+                            </button>
+                            <button
+                              onClick={() => setConfirmDeleteNoteId(null)}
+                              className="p-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+                              title="Cancel"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => setConfirmDeleteNoteId(note.id)}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-bold transition-all cursor-pointer"
+                            title="Delete this note permanently"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            <span>Delete</span>
+                          </button>
+                        )}
                       </td>
                     </tr>
                   ))}
