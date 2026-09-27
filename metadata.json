@@ -1,0 +1,6 @@
+{
+  "name": "APS Notes - VTU Notes, Papers & Academic Assistant",
+  "description": "VTU study notes, question papers, syllabus, lab programs, SGPA/CGPA calculators, and personalized real-time AI customer support.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
