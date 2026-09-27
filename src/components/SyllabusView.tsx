@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { REAL_SYLLABI, SyllabusItem } from '../data/apsData';
 import { BookOpen, CheckCircle2, FileText, Sparkles, Search, Clock } from 'lucide-react';
 import { StudentProfile } from '../types';
@@ -9,11 +9,24 @@ interface Props {
 }
 
 export const SyllabusView: React.FC<Props> = ({ profile: _profile, onAskGemini }) => {
+  const [syllabusList, setSyllabusList] = useState<SyllabusItem[]>(REAL_SYLLABI);
   const [selectedScheme, setSelectedScheme] = useState<string>('all');
   const [activeItem, setActiveItem] = useState<SyllabusItem>(REAL_SYLLABI[0]);
   const [search, setSearch] = useState<string>('');
 
-  const filtered = REAL_SYLLABI.filter((s) => {
+  useEffect(() => {
+    fetch('/api/syllabus')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.syllabus && Array.isArray(data.syllabus) && data.syllabus.length > 0) {
+          setSyllabusList(data.syllabus);
+          setActiveItem(data.syllabus[0]);
+        }
+      })
+      .catch((_e) => {});
+  }, []);
+
+  const filtered = syllabusList.filter((s) => {
     const matchScheme = selectedScheme === 'all' || s.scheme === selectedScheme;
     const matchSearch =
       search === '' ||

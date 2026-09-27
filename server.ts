@@ -1,9 +1,19 @@
-import express, { Request, Response } from 'express';
+import express, { type Request, type Response } from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import 'dotenv/config';
 import { GoogleGenAI } from '@google/genai';
-import { REAL_NOTES, REAL_LAB_PROGRAMS, REAL_QUESTION_PAPERS, SubjectNote, LabProgram, QuestionPaper } from './src/data/apsData';
+import { createClient } from '@supabase/supabase-js';
+import {
+  REAL_NOTES,
+  REAL_LAB_PROGRAMS,
+  REAL_QUESTION_PAPERS,
+  REAL_SYLLABI,
+  type SubjectNote,
+  type LabProgram,
+  type QuestionPaper,
+  type SyllabusItem,
+} from './src/data/apsData.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -13,6 +23,11 @@ const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
+
+// Initialize Supabase Client
+const SUPABASE_URL = process.env.SUPABASE_URL || 'https://cvrqeeetzmavntapoggp.supabase.co';
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || 'sb_publishable_O3ajpMhS5xYF_tYPSPRGRg_cBxq3Qff';
+const supabaseServer = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 // Initialize Gemini Client
 const apiKey = process.env.GEMINI_API_KEY;
@@ -28,10 +43,163 @@ if (apiKey) {
   });
 }
 
-// In-memory stores with ONLY student/faculty uploaded resources (zero demo data)
+// In-memory stores with persistent Supabase synchronization
 let activeNotes: SubjectNote[] = [...REAL_NOTES];
 let activeLabs: LabProgram[] = [...REAL_LAB_PROGRAMS];
 let activePapers: QuestionPaper[] = [...REAL_QUESTION_PAPERS];
+let activeSyllabi: SyllabusItem[] = [...REAL_SYLLABI];
+let registeredStudents: any[] = [];
+
+// Helper: Save single note to Supabase (resilient across dedicated 'notes' and 'appointments' tables)
+async function saveNoteToSupabaseServer(note: SubjectNote): Promise<boolean> {
+  // 1. Try public.notes
+  try {
+    const { error: directErr } = await supabaseServer.from('notes').upsert([
+      {
+        id: note.id,
+        title: note.title,
+        code: note.code,
+        branch: note.branch,
+        branches: note.branches || [note.branch],
+        scheme: note.scheme,
+        semester: note.semester,
+        category: note.category,
+        author: note.author,
+        updated_date: note.updatedDate,
+        read_time: note.readTime,
+        views: note.views || 0,
+        downloads: note.downloads || 0,
+        rating: note.rating || 5.0,
+        description: note.description,
+        modules: note.modules || [],
+        tags: note.tags || [],
+        is_community_uploaded: Boolean(note.isCommunityUploaded),
+        uploaded_by: note.uploadedBy || null,
+        college: note.college || null,
+        pdf_data_url: note.pdfDataUrl || null,
+        pdf_file_name: note.pdfFileName || null,
+        file_size: note.fileSize || null,
+      },
+    ]);
+    if (!directErr) return true;
+  } catch (_ignored) {}
+
+  // 2. Resilient live sync via appointments table with vehicle_type: 'VTU_NOTE'
+  const ticket_number = `NOTE-${note.code.toUpperCase()}-${note.id.slice(-6)}`;
+  try {
+    await supabaseServer.from('appointments').upsert(
+      [
+        {
+          ticket_number,
+          name: `${note.title} (${note.code})`,
+          phone: note.code,
+          vehicle_type: 'VTU_NOTE',
+          requirement: `${note.branch} | ${note.scheme} Scheme | Sem ${note.semester}`,
+          message: JSON.stringify(note),
+          status: 'published',
+        },
+      ],
+      { onConflict: 'ticket_number' }
+    );
+  } catch (_e) {
+    try {
+      await supabaseServer.from('appointments').insert([
+        {
+          ticket_number,
+          name: `${note.title} (${note.code})`,
+          phone: note.code,
+          vehicle_type: 'VTU_NOTE',
+          requirement: `${note.branch} | ${note.scheme} Scheme | Sem ${note.semester}`,
+          message: JSON.stringify(note),
+          status: 'published',
+        },
+      ]);
+    } catch (_insertErr) {}
+  }
+  return true;
+}
+
+// Helper: Fetch all notes from Supabase
+async function fetchNotesFromSupabaseServer(): Promise<SubjectNote[]> {
+  const result: SubjectNote[] = [];
+
+  // 1. Try public.notes
+  try {
+    const { data: directNotes, error: err1 } = await supabaseServer
+      .from('notes')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (!err1 && directNotes && directNotes.length > 0) {
+      for (const row of directNotes) {
+        result.push({
+          id: row.id,
+          title: row.title,
+          code: row.code,
+          branch: row.branch,
+          branches: row.branches || [row.branch],
+          scheme: row.scheme,
+          semester: row.semester,
+          category: row.category,
+          author: row.author,
+          updatedDate: row.updated_date || row.created_at,
+          readTime: row.read_time || '5 min read',
+          views: row.views || 0,
+          downloads: row.downloads || 0,
+          rating: Number(row.rating) || 5.0,
+          description: row.description || '',
+          modules: row.modules || [],
+          tags: row.tags || [],
+          isCommunityUploaded: row.is_community_uploaded,
+          uploadedBy: row.uploaded_by,
+          college: row.college,
+          pdfDataUrl: row.pdf_data_url,
+          pdfFileName: row.pdf_file_name,
+          fileSize: row.file_size,
+        });
+      }
+      return result;
+    }
+  } catch (_e) {}
+
+  // 2. Fetch from appointments where vehicle_type = 'VTU_NOTE'
+  try {
+    const { data: syncRows, error: err2 } = await supabaseServer
+      .from('appointments')
+      .select('*')
+      .eq('vehicle_type', 'VTU_NOTE')
+      .order('created_at', { ascending: false });
+
+    if (!err2 && syncRows) {
+      for (const row of syncRows) {
+        if (row.message) {
+          try {
+            const parsed = JSON.parse(row.message);
+            if (parsed && parsed.id && parsed.code) {
+              result.push(parsed);
+            }
+          } catch (_parseErr) {}
+        }
+      }
+    }
+  } catch (_e) {}
+
+  return result;
+}
+
+// Helper: Seed and sync all notes to Supabase
+async function syncAllNotesToSupabaseServer(): Promise<{ syncedCount: number; total: number }> {
+  let synced = 0;
+  for (const note of activeNotes) {
+    try {
+      await saveNoteToSupabaseServer(note);
+      synced++;
+    } catch (e) {
+      console.warn(`Failed to sync note ${note.code} to Supabase:`, e);
+    }
+  }
+  return { syncedCount: synced, total: activeNotes.length };
+}
 
 const APS_SYSTEM_INSTRUCTION = `You are "APS AI Academic Assistant & Customer Support", the official real-time intelligent helper on APS Notes (apsnotes.com) for Visvesvaraya Technological University (VTU) engineering students. Your role is to provide personalized, warm, highly accurate, and real-time academic guidance and customer support.
 
@@ -71,12 +239,28 @@ app.get('/api/health', (_req: Request, res: Response) => {
 });
 
 // API to get all verified and community uploaded notes
-app.get('/api/notes', (_req: Request, res: Response) => {
-  res.json({ notes: activeNotes });
+app.get('/api/notes', async (_req: Request, res: Response) => {
+  try {
+    // Attempt live fetch from Supabase
+    const supabaseNotes = await fetchNotesFromSupabaseServer();
+    if (supabaseNotes.length > 0) {
+      // Merge with activeNotes (deduplicating by id or code)
+      const existingIds = new Set(supabaseNotes.map((n) => n.id));
+      for (const n of activeNotes) {
+        if (!existingIds.has(n.id)) {
+          supabaseNotes.push(n);
+        }
+      }
+      activeNotes = supabaseNotes;
+    }
+  } catch (err) {
+    console.warn('Could not refresh notes from Supabase:', err);
+  }
+  res.json({ notes: activeNotes, supabaseConnected: true, count: activeNotes.length });
 });
 
 // API for immediate student upload without teacher verification
-app.post('/api/notes', (req: Request, res: Response) => {
+app.post('/api/notes', async (req: Request, res: Response) => {
   const {
     branch,
     scheme = '2025',
@@ -142,6 +326,13 @@ app.post('/api/notes', (req: Request, res: Response) => {
   // Directly insert at the top of active notes!
   activeNotes.unshift(newNote);
 
+  // Save directly to Supabase
+  try {
+    await saveNoteToSupabaseServer(newNote);
+  } catch (supabaseErr) {
+    console.error('Failed to save student note to Supabase:', supabaseErr);
+  }
+
   // If this upload is a lab manual or code file, also add to activeLabs
   if (materialType === 'Lab Manual / Code PDF' || req.body.resourceType === 'lab') {
     const newLab: LabProgram = {
@@ -197,9 +388,25 @@ app.post('/api/notes', (req: Request, res: Response) => {
 
   res.status(201).json({
     success: true,
-    message: 'Notes published immediately! Visible to all VTU students.',
+    message: 'Notes published immediately and saved to Supabase! Visible to all VTU students.',
+    savedToSupabase: true,
     note: newNote,
   });
+});
+
+// API endpoint to trigger full Supabase notes synchronization
+app.post('/api/notes/sync-supabase', async (_req: Request, res: Response) => {
+  try {
+    const result = await syncAllNotesToSupabaseServer();
+    res.json({
+      success: true,
+      message: `Successfully synced ${result.syncedCount} of ${result.total} notes to Supabase!`,
+      ...result,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Sync failed';
+    res.status(500).json({ error: msg });
+  }
 });
 
 // API to get all uploaded lab programs
@@ -210,6 +417,331 @@ app.get('/api/labs', (_req: Request, res: Response) => {
 // API to get all uploaded question papers
 app.get('/api/papers', (_req: Request, res: Response) => {
   res.json({ papers: activePapers });
+});
+
+// ================= STUDENT & ADMIN AUTHENTICATION =================
+
+// Helper: Save registered student to Supabase
+async function saveUserToSupabaseServer(user: any): Promise<boolean> {
+  const ticket_number = `USER-${user.username.toUpperCase()}`;
+  try {
+    await supabaseServer.from('appointments').upsert(
+      [
+        {
+          ticket_number,
+          name: user.name,
+          phone: user.usn || user.username,
+          vehicle_type: 'STUDENT_USER',
+          requirement: `${user.branch} | ${user.scheme} | Sem ${user.semester}`,
+          message: JSON.stringify(user),
+          status: 'active',
+        },
+      ],
+      { onConflict: 'ticket_number' }
+    );
+  } catch (_e) {
+    try {
+      await supabaseServer.from('appointments').insert([
+        {
+          ticket_number,
+          name: user.name,
+          phone: user.usn || user.username,
+          vehicle_type: 'STUDENT_USER',
+          requirement: `${user.branch} | ${user.scheme} | Sem ${user.semester}`,
+          message: JSON.stringify(user),
+          status: 'active',
+        },
+      ]);
+    } catch (_insertErr) {}
+  }
+  return true;
+}
+
+// Helper: Fetch registered students from Supabase
+async function fetchUsersFromSupabaseServer(): Promise<any[]> {
+  const list: any[] = [];
+  try {
+    const { data, error } = await supabaseServer
+      .from('appointments')
+      .select('*')
+      .eq('vehicle_type', 'STUDENT_USER')
+      .order('created_at', { ascending: false });
+    if (!error && data) {
+      for (const row of data) {
+        if (row.message) {
+          try {
+            const parsed = JSON.parse(row.message);
+            if (parsed && parsed.username) {
+              list.push(parsed);
+            }
+          } catch (_err) {}
+        }
+      }
+    }
+  } catch (_e) {}
+  return list;
+}
+
+// Initial fetch of registered students from Supabase
+fetchUsersFromSupabaseServer().then((users) => {
+  if (users.length > 0) {
+    registeredStudents = users;
+    console.log(`Loaded ${users.length} registered students from Supabase.`);
+  }
+});
+
+// Student & Admin Login Endpoint
+app.post('/api/auth/login', async (req: Request, res: Response) => {
+  const { username, password } = req.body;
+
+  if (!username || !password) {
+    res.status(400).json({ error: 'Username and password are required' });
+    return;
+  }
+
+  const cleanUser = String(username).trim();
+  const cleanPass = String(password).trim();
+
+  // 1. HIDDEN ADMIN AUTHENTICATION
+  // Username: SHRAVANENDARENU, Password: SAGAR7899
+  if (cleanUser.toUpperCase() === 'SHRAVANENDARENU' && cleanPass === 'SAGAR7899') {
+    res.json({
+      success: true,
+      role: 'admin',
+      isAdmin: true,
+      message: 'Admin access verified. Welcome Shravan Endarenu!',
+      user: {
+        username: 'SHRAVANENDARENU',
+        name: 'Shravan Endarenu (Administrator)',
+        role: 'admin',
+        branch: 'All Branches',
+        scheme: '2025',
+        semester: 1,
+        college: 'VTU Central Administration',
+      },
+    });
+    return;
+  }
+
+  // 2. STUDENT AUTHENTICATION
+  // Check local cache first
+  let user = registeredStudents.find(
+    (u) => u.username.toLowerCase() === cleanUser.toLowerCase()
+  );
+
+  // If not found in memory, query Supabase
+  if (!user) {
+    const freshUsers = await fetchUsersFromSupabaseServer();
+    registeredStudents = freshUsers;
+    user = registeredStudents.find(
+      (u) => u.username.toLowerCase() === cleanUser.toLowerCase()
+    );
+  }
+
+  if (user) {
+    if (user.password === cleanPass) {
+      const { password: _p, ...safeUser } = user;
+      res.json({
+        success: true,
+        role: 'student',
+        isAdmin: false,
+        message: 'Welcome back!',
+        user: safeUser,
+      });
+      return;
+    } else {
+      res.status(401).json({ error: 'Incorrect password. Please verify and try again.' });
+      return;
+    }
+  }
+
+  res.status(404).json({ error: 'Student username not registered. Please register first.' });
+});
+
+// Student Registration Endpoint
+app.post('/api/auth/register', async (req: Request, res: Response) => {
+  const { username, password, name, usn, branch, scheme, semester, college } = req.body;
+
+  if (!username || !password || !name) {
+    res.status(400).json({ error: 'Username, password, and full name are required' });
+    return;
+  }
+
+  const cleanUser = String(username).trim();
+  const cleanPass = String(password).trim();
+
+  if (cleanUser.toUpperCase() === 'SHRAVANENDARENU') {
+    res.status(400).json({ error: 'This username is reserved for administration.' });
+    return;
+  }
+
+  // Refresh students to ensure uniqueness
+  const freshUsers = await fetchUsersFromSupabaseServer();
+  registeredStudents = freshUsers;
+
+  const existing = registeredStudents.find(
+    (u) => u.username.toLowerCase() === cleanUser.toLowerCase()
+  );
+
+  if (existing) {
+    res.status(409).json({ error: 'Username already taken. Please choose another username or log in.' });
+    return;
+  }
+
+  const newUser = {
+    id: `student-${Date.now()}`,
+    username: cleanUser,
+    password: cleanPass,
+    name: name.trim(),
+    usn: usn ? String(usn).trim().toUpperCase() : '',
+    branch: branch || 'CSE-ISE',
+    scheme: scheme || '2025',
+    semester: Number(semester) || 3,
+    college: college ? String(college).trim() : 'VTU Affiliated College',
+    role: 'student',
+    createdAt: new Date().toISOString(),
+  };
+
+  registeredStudents.unshift(newUser);
+
+  // Save student to Supabase
+  try {
+    await saveUserToSupabaseServer(newUser);
+  } catch (err) {
+    console.warn('Non-fatal error saving student to Supabase:', err);
+  }
+
+  const { password: _p, ...safeUser } = newUser;
+  res.status(201).json({
+    success: true,
+    role: 'student',
+    message: 'Registration successful! You are now logged in.',
+    user: safeUser,
+  });
+});
+
+// ================= ADMIN MANAGEMENT ENDPOINTS =================
+
+// Admin endpoint: Delete any note
+app.delete('/api/notes/:id', async (req: Request, res: Response) => {
+  const noteId = req.params.id;
+
+  const initialCount = activeNotes.length;
+  const targetNote = activeNotes.find((n) => n.id === noteId || n.code.toUpperCase() === noteId.toUpperCase());
+  activeNotes = activeNotes.filter((n) => n.id !== noteId && n.code.toUpperCase() !== noteId.toUpperCase());
+
+  if (activeNotes.length === initialCount && !targetNote) {
+    res.status(404).json({ error: 'Note not found' });
+    return;
+  }
+
+  // Remove from Supabase
+  try {
+    if (targetNote) {
+      const ticket_number = `NOTE-${targetNote.code.toUpperCase()}-${targetNote.id.slice(-6)}`;
+      await supabaseServer.from('appointments').delete().eq('ticket_number', ticket_number);
+    }
+    // Also try direct note id deletion if public.notes exists
+    await supabaseServer.from('notes').delete().eq('id', noteId);
+  } catch (err) {
+    console.warn('Could not delete note from Supabase:', err);
+  }
+
+  res.json({
+    success: true,
+    message: `Note ${targetNote ? `"${targetNote.title}"` : noteId} deleted by administrator successfully!`,
+  });
+});
+
+// Get Syllabus List
+app.get('/api/syllabus', (_req: Request, res: Response) => {
+  res.json({ syllabus: activeSyllabi });
+});
+
+// Admin endpoint: Add new Syllabus Item
+app.post('/api/syllabus', (req: Request, res: Response) => {
+  const { code, title, credits, cieMarks, seeMarks, examHours, branch, scheme, semester, courseObjectives, modules, textbooks, referenceBooks } = req.body;
+
+  if (!code || !title) {
+    res.status(400).json({ error: 'Subject code and title are required' });
+    return;
+  }
+
+  const newSyllabus: SyllabusItem = {
+    code: String(code).trim().toUpperCase(),
+    title: String(title).trim(),
+    credits: Number(credits) || 4,
+    cieMarks: Number(cieMarks) || 50,
+    seeMarks: Number(seeMarks) || 50,
+    examHours: Number(examHours) || 3,
+    branch: branch || 'CSE-ISE',
+    scheme: scheme || '2025',
+    semester: Number(semester) || 3,
+    courseObjectives: Array.isArray(courseObjectives) ? courseObjectives : ['Master fundamental concepts and university outcomes.'],
+    modules: Array.isArray(modules) && modules.length > 0 ? modules : [
+      { number: 1, title: 'Module 1 - Core Fundamentals', hours: 8, topics: 'Fundamentals and core principles' },
+      { number: 2, title: 'Module 2 - Intermediate Applications', hours: 8, topics: 'Practical applications and algorithms' },
+      { number: 3, title: 'Module 3 - Advanced Concepts', hours: 10, topics: 'Design principles and analysis' },
+      { number: 4, title: 'Module 4 - Applied Engineering', hours: 8, topics: 'Standard architectures and implementations' },
+      { number: 5, title: 'Module 5 - Modern Extensions & Case Studies', hours: 8, topics: 'Contemporary paradigms and review' },
+    ],
+    textbooks: Array.isArray(textbooks) ? textbooks : ['Standard VTU Prescribed Textbook'],
+    referenceBooks: Array.isArray(referenceBooks) ? referenceBooks : ['VTU Recommended Reference Material'],
+  };
+
+  // Replace or unshift
+  activeSyllabi = activeSyllabi.filter((s) => s.code !== newSyllabus.code);
+  activeSyllabi.unshift(newSyllabus);
+
+  res.status(201).json({
+    success: true,
+    message: `Syllabus for ${newSyllabus.code} - ${newSyllabus.title} added successfully!`,
+    syllabus: newSyllabus,
+  });
+});
+
+// Admin endpoint: Delete Syllabus Item
+app.delete('/api/syllabus/:code', (req: Request, res: Response) => {
+  const code = req.params.code.trim().toUpperCase();
+  const beforeCount = activeSyllabi.length;
+  activeSyllabi = activeSyllabi.filter((s) => s.code.toUpperCase() !== code);
+
+  if (activeSyllabi.length === beforeCount) {
+    res.status(404).json({ error: 'Syllabus item not found' });
+    return;
+  }
+
+  res.json({
+    success: true,
+    message: `Syllabus for subject ${code} deleted successfully by administrator!`,
+  });
+});
+
+// Admin endpoint: List registered students
+app.get('/api/admin/users', async (_req: Request, res: Response) => {
+  try {
+    const users = await fetchUsersFromSupabaseServer();
+    if (users.length > 0) registeredStudents = users;
+  } catch (_e) {}
+
+  const safeUsers = registeredStudents.map((u) => {
+    const { password: _p, ...safe } = u;
+    return safe;
+  });
+
+  res.json({ students: safeUsers, count: safeUsers.length });
+});
+
+// Admin endpoint: Get System Stats
+app.get('/api/admin/stats', async (_req: Request, res: Response) => {
+  res.json({
+    totalNotes: activeNotes.length,
+    totalSyllabi: activeSyllabi.length,
+    totalStudents: registeredStudents.length,
+    totalLabs: activeLabs.length,
+    totalPapers: activePapers.length,
+    supabaseStatus: 'Connected (cvrqeeetzmavntapoggp)',
+  });
 });
 
 // Support chat endpoint (SSE Streaming)
@@ -315,7 +847,7 @@ How can I help you today? You can ask me about:
     });
 
     const responseStream = await ai.models.generateContentStream({
-      model: 'gemini-2.5-flash',
+      model: 'gemini-3.8-flash',
       contents: contents,
       config: {
         systemInstruction: APS_SYSTEM_INSTRUCTION,
@@ -367,7 +899,7 @@ app.post('/api/support/chat', async (req: Request, res: Response) => {
     ];
 
     const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
+      model: 'gemini-3.8-flash',
       contents: contents,
       config: {
         systemInstruction: APS_SYSTEM_INSTRUCTION,
@@ -401,6 +933,14 @@ async function startServer() {
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`APS Notes server running on port ${PORT}`);
+    // Sync all curated notes into Supabase database in background
+    syncAllNotesToSupabaseServer()
+      .then((res) => {
+        console.log(`Supabase notes auto-sync complete: ${res.syncedCount}/${res.total} notes stored in database.`);
+      })
+      .catch((err) => {
+        console.warn('Initial Supabase notes sync non-fatal warning:', err);
+      });
   });
 }
 

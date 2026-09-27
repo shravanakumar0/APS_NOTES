@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ActiveTab, StudentProfile } from '../types';
+import { ActiveTab, StudentProfile, StudentUser } from '../types';
 import {
   BookOpen,
   Search,
@@ -8,27 +8,36 @@ import {
   Sparkles,
   UploadCloud,
   Heart,
-  GraduationCap
+  GraduationCap,
+  LogIn,
+  LogOut,
+  ShieldAlert
 } from 'lucide-react';
 
 interface Props {
   activeTab: ActiveTab;
   setActiveTab: (tab: ActiveTab) => void;
   profile: StudentProfile;
+  currentUser?: StudentUser | null;
   onOpenProfile: () => void;
   onOpenSearch: () => void;
   onOpenUpload: () => void;
   onOpenSupportUs: () => void;
+  onOpenAuthModal?: () => void;
+  onLogout?: () => void;
 }
 
 export const Navbar: React.FC<Props> = ({
   activeTab,
   setActiveTab,
   profile,
+  currentUser,
   onOpenProfile,
   onOpenSearch,
   onOpenUpload,
   onOpenSupportUs,
+  onOpenAuthModal,
+  onLogout,
 }) => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
@@ -38,6 +47,8 @@ export const Navbar: React.FC<Props> = ({
         ? 'bg-slate-900 text-white shadow-xs'
         : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
     }`;
+
+  const isAdmin = currentUser?.role === 'admin';
 
   return (
     <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200/80">
@@ -91,6 +102,22 @@ export const Navbar: React.FC<Props> = ({
             <button onClick={() => setActiveTab('papers')} className={navItemClass('papers')}>
               Papers
             </button>
+
+            {/* ONLY VISIBLE IF LOGGED IN AS ADMIN - HIDDEN FROM STUDENTS */}
+            {isAdmin && (
+              <button
+                onClick={() => setActiveTab('admin')}
+                className={`px-3 py-2 rounded-xl text-xs md:text-sm font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                  activeTab === 'admin'
+                    ? 'bg-rose-700 text-white shadow-md'
+                    : 'bg-rose-50 text-rose-800 border border-rose-300 hover:bg-rose-100'
+                }`}
+              >
+                <ShieldAlert className="w-3.5 h-3.5" />
+                <span>Admin Panel</span>
+              </button>
+            )}
+
             <button
               onClick={() => setActiveTab('support')}
               className={`px-3 py-2 rounded-xl text-xs md:text-sm font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
@@ -134,24 +161,48 @@ export const Navbar: React.FC<Props> = ({
               <span>Support Us</span>
             </button>
 
-            {/* Profile Avatar Trigger */}
-            <button
-              onClick={onOpenProfile}
-              className="inline-flex items-center gap-2 pl-2 pr-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200/80 border border-slate-200 transition-all cursor-pointer text-left"
-              title="Personalize Semester & Branch"
-            >
-              <div className="w-7 h-7 rounded-lg bg-slate-900 text-white flex items-center justify-center font-bold text-xs">
-                {profile.name.charAt(0) || 'V'}
+            {/* Student Auth / Profile Pill */}
+            {currentUser ? (
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={onOpenProfile}
+                  className="inline-flex items-center gap-2 pl-2 pr-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200/80 border border-slate-200 transition-all cursor-pointer text-left"
+                  title="Your Profile"
+                >
+                  <div className={`w-7 h-7 rounded-lg text-white flex items-center justify-center font-bold text-xs ${isAdmin ? 'bg-rose-700' : 'bg-slate-900'}`}>
+                    {currentUser.name.charAt(0) || 'S'}
+                  </div>
+                  <div className="hidden xl:block">
+                    <div className="text-[11px] font-bold text-slate-800 leading-tight">
+                      {currentUser.name.split(' ')[0]}
+                    </div>
+                    <div className="text-[9px] font-semibold text-teal-700 leading-none">
+                      {isAdmin ? 'Administrator' : `${currentUser.branch} (Sem ${currentUser.semester})`}
+                    </div>
+                  </div>
+                </button>
+
+                {onLogout && (
+                  <button
+                    onClick={onLogout}
+                    className="p-2 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                    title="Sign Out"
+                  >
+                    <LogOut className="w-4 h-4" />
+                  </button>
+                )}
               </div>
-              <div className="hidden xl:block">
-                <div className="text-[11px] font-bold text-slate-800 leading-tight">
-                  {profile.name.split(' ')[0]}
-                </div>
-                <div className="text-[9px] font-semibold text-teal-700 leading-none">
-                  {profile.branch} (Sem {profile.semester})
-                </div>
-              </div>
-            </button>
+            ) : (
+              onOpenAuthModal && (
+                <button
+                  onClick={onOpenAuthModal}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold text-white bg-slate-900 hover:bg-slate-800 shadow-sm transition-all cursor-pointer"
+                >
+                  <LogIn className="w-3.5 h-3.5 text-teal-400" />
+                  <span>Student Sign In</span>
+                </button>
+              )
+            )}
 
             {/* Mobile Menu Button */}
             <button
@@ -167,23 +218,38 @@ export const Navbar: React.FC<Props> = ({
       {/* Mobile Drawer */}
       {mobileMenuOpen && (
         <div className="lg:hidden border-t border-slate-200 bg-white px-4 pt-3 pb-6 space-y-2 shadow-xl">
-          <div className="p-3 bg-slate-50 rounded-xl mb-3 border border-slate-200 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <GraduationCap className="w-4 h-4 text-teal-600" />
-              <div className="text-xs font-bold text-slate-800">
-                {profile.name} • {profile.branch} Sem {profile.semester}
+          {currentUser && (
+            <div className="p-3 bg-slate-50 rounded-xl mb-3 border border-slate-200 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <GraduationCap className="w-4 h-4 text-teal-600" />
+                <div className="text-xs font-bold text-slate-800">
+                  {currentUser.name} • {isAdmin ? 'Admin' : `${currentUser.branch} Sem ${currentUser.semester}`}
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    setMobileMenuOpen(false);
+                    onOpenProfile();
+                  }}
+                  className="text-[11px] text-teal-700 font-bold hover:underline"
+                >
+                  Profile
+                </button>
+                {onLogout && (
+                  <button
+                    onClick={() => {
+                      setMobileMenuOpen(false);
+                      onLogout();
+                    }}
+                    className="text-[11px] text-rose-600 font-bold hover:underline"
+                  >
+                    Logout
+                  </button>
+                )}
               </div>
             </div>
-            <button
-              onClick={() => {
-                setMobileMenuOpen(false);
-                onOpenProfile();
-              }}
-              className="text-[11px] text-teal-700 font-bold hover:underline"
-            >
-              Edit
-            </button>
-          </div>
+          )}
 
           <div className="grid grid-cols-2 gap-2 text-xs font-semibold">
             <button
@@ -211,7 +277,7 @@ export const Navbar: React.FC<Props> = ({
               }}
               className={`p-2.5 rounded-xl text-left ${activeTab === 'labs' ? 'bg-slate-900 text-white' : 'bg-slate-50 text-slate-700'}`}
             >
-              Lab Programs
+              Laboratory
             </button>
             <button
               onClick={() => {
@@ -249,6 +315,20 @@ export const Navbar: React.FC<Props> = ({
             >
               VTU Papers
             </button>
+
+            {isAdmin && (
+              <button
+                onClick={() => {
+                  setActiveTab('admin');
+                  setMobileMenuOpen(false);
+                }}
+                className={`p-2.5 rounded-xl text-left flex items-center gap-1.5 ${activeTab === 'admin' ? 'bg-rose-700 text-white' : 'bg-rose-50 text-rose-800'}`}
+              >
+                <ShieldAlert className="w-3.5 h-3.5" />
+                Admin Panel
+              </button>
+            )}
+
             <button
               onClick={() => {
                 setActiveTab('support');
@@ -285,3 +365,4 @@ export const Navbar: React.FC<Props> = ({
     </header>
   );
 };
+

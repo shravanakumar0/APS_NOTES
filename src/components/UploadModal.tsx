@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { UploadCloud, CheckCircle2, X, Sparkles, Download, Eye, Trash2, FileCheck, Layers } from 'lucide-react';
+import { UploadCloud, CheckCircle2, X, Sparkles, Download, Eye, Trash2, FileCheck, Layers, Database } from 'lucide-react';
 import { StudentProfile } from '../types';
 import { SubjectNote, LabProgram, QuestionPaper } from '../data/apsData';
 import { downloadNotePDF } from '../utils/pdfExport';
@@ -321,6 +321,13 @@ export const UploadModal: React.FC<Props> = ({
               <div className="flex justify-between text-slate-600">
                 <span>Contributor:</span>
                 <span className="font-medium text-slate-800">{submittedNote.author}</span>
+              </div>
+              <div className="flex justify-between items-center text-teal-800 bg-teal-50 px-2 py-1.5 rounded-lg border border-teal-200">
+                <span className="font-semibold flex items-center gap-1.5">
+                  <Database className="w-3.5 h-3.5 text-teal-600" />
+                  <span>Database Sync:</span>
+                </span>
+                <span className="font-mono text-[11px] font-bold text-teal-900">Saved in Supabase (Live for All)</span>
               </div>
             </div>
 

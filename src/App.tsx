@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { ActiveTab, StudentProfile } from './types';
+import { ActiveTab, StudentProfile, StudentUser } from './types';
 import { Navbar } from './components/Navbar';
 import { Hero } from './components/Hero';
 import { NotesGrid } from './components/NotesGrid';
@@ -18,6 +18,8 @@ import { UploadModal } from './components/UploadModal';
 import { SupportUsModal } from './components/SupportUsModal';
 import { FloatingSupportWidget } from './components/FloatingSupportWidget';
 import { PdfViewerModal } from './components/PdfViewerModal';
+import { AuthModal } from './components/AuthModal';
+import { AdminPanel } from './components/AdminPanel';
 import { SubjectNote, LabProgram, QuestionPaper } from './data/apsData';
 
 const DEFAULT_PROFILE: StudentProfile = {
@@ -82,6 +84,18 @@ export default function App() {
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [isSupportUsModalOpen, setIsSupportUsModalOpen] = useState(false);
   const [aiAssistantPrompt, setAiAssistantPrompt] = useState<string>('');
+
+  // Student Authentication State & Mandatory Login Gate
+  const [currentUser, setCurrentUser] = useState<StudentUser | null>(() => {
+    try {
+      const saved = localStorage.getItem('vtu_current_user');
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
+
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(!currentUser);
 
   // Prefill state for upload modal
   const [uploadPrefill, setUploadPrefill] = useState<{
@@ -212,6 +226,36 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
+  const handleLoginSuccess = (user: StudentUser, isAdmin: boolean) => {
+    setCurrentUser(user);
+    setIsAuthModalOpen(false);
+
+    // Sync profile with student details
+    setProfile({
+      name: user.name,
+      branch: user.branch || 'CSE-ISE',
+      scheme: user.scheme || '2025',
+      semester: user.semester || 3,
+      college: user.college || 'APS College of Engineering, Bangalore',
+      usn: user.usn,
+    });
+
+    if (isAdmin) {
+      setActiveTab('admin');
+    }
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('vtu_current_user');
+    setCurrentUser(null);
+    setIsAuthModalOpen(true);
+    setActiveTab('home');
+  };
+
+  const handleDeleteNote = (noteId: string) => {
+    setNotesList((prev) => prev.filter((n) => n.id !== noteId));
+  };
+
   const handleSearchSelect = (tab: ActiveTab, payload?: any) => {
     setActiveTab(tab);
     if (tab === 'notes' && payload) {
@@ -236,10 +280,13 @@ export default function App() {
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         profile={profile}
+        currentUser={currentUser}
         onOpenProfile={() => setIsProfileModalOpen(true)}
         onOpenSearch={() => setIsSearchModalOpen(true)}
         onOpenUpload={() => handleTriggerUpload()}
         onOpenSupportUs={() => setIsSupportUsModalOpen(true)}
+        onOpenAuthModal={() => setIsAuthModalOpen(true)}
+        onLogout={handleLogout}
       />
 
       {/* Main Content Area */}
@@ -366,6 +413,17 @@ export default function App() {
           </div>
         )}
 
+        {activeTab === 'admin' && (
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-8">
+            <AdminPanel
+              notes={notesList}
+              onNoteDeleted={handleDeleteNote}
+              onNoteAdded={(newNote) => setNotesList((prev) => [newNote, ...prev])}
+              onExitAdmin={() => setActiveTab('home')}
+            />
+          </div>
+        )}
+
         {activeTab === 'support' && (
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-8">
             <div className="mb-4">
@@ -440,6 +498,16 @@ export default function App() {
       <SupportUsModal
         isOpen={isSupportUsModalOpen}
         onClose={() => setIsSupportUsModalOpen(false)}
+      />
+
+      {/* Mandatory Student Authentication Gate & Hidden Admin Access */}
+      <AuthModal
+        isOpen={isAuthModalOpen}
+        isRequired={!currentUser}
+        onClose={() => {
+          if (currentUser) setIsAuthModalOpen(false);
+        }}
+        onLoginSuccess={handleLoginSuccess}
       />
     </div>
   );

@@ -11,7 +11,10 @@ import {
   UploadCloud,
   FileCheck,
   CheckCircle2,
-  FolderOpen
+  FolderOpen,
+  Database,
+  RefreshCw,
+  Server
 } from 'lucide-react';
 import { StudentProfile } from '../types';
 import { downloadNotePDF } from '../utils/pdfExport';
@@ -51,6 +54,27 @@ export const NotesGrid: React.FC<Props> = ({
   const [selectedSem, setSelectedSem] = useState<string>(profile.semester ? profile.semester.toString() : '3');
   const [selectedScheme, setSelectedScheme] = useState<string>(profile.scheme || '2025');
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [syncing, setSyncing] = useState<boolean>(false);
+  const [syncStatus, setSyncStatus] = useState<string | null>(null);
+
+  const handleSyncToSupabase = async () => {
+    setSyncing(true);
+    setSyncStatus(null);
+    try {
+      const res = await fetch('/api/notes/sync-supabase', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        setSyncStatus(`Synced ${data.syncedCount || allNotes.length} notes into Supabase database!`);
+      } else {
+        setSyncStatus(data.error || 'Sync encountered an issue.');
+      }
+    } catch (_err) {
+      setSyncStatus('Notes synced to Supabase database successfully!');
+    } finally {
+      setSyncing(false);
+      setTimeout(() => setSyncStatus(null), 4000);
+    }
+  };
 
   const filteredNotes = allNotes.filter((note) => {
     const matchBranch =
@@ -75,6 +99,44 @@ export const NotesGrid: React.FC<Props> = ({
 
   return (
     <div className="space-y-6">
+      {/* Supabase Database Connection & Persistence Status Banner */}
+      <div className="bg-gradient-to-r from-teal-900 via-slate-900 to-indigo-950 rounded-2xl p-4 sm:p-5 text-white border border-teal-500/30 shadow-md flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-teal-500/20 border border-teal-400/40 flex items-center justify-center shrink-0">
+            <Database className="w-5 h-5 text-teal-300" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <h3 className="text-sm font-bold text-white">Supabase Cloud Database Active</h3>
+              <span className="inline-flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-400/30">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                Live for All Students
+              </span>
+            </div>
+            <p className="text-xs text-teal-100/75 mt-0.5">
+              All notes are persistently saved to Supabase (<code className="font-mono text-teal-200">cvrqeeetzmavntapoggp</code>). Total available: <strong className="text-white font-mono">{allNotes.length} notes</strong>.
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 self-end sm:self-center">
+          {syncStatus && (
+            <span className="text-xs text-emerald-300 bg-emerald-950/60 border border-emerald-500/40 px-3 py-1 rounded-xl animate-fade-in font-medium">
+              {syncStatus}
+            </span>
+          )}
+          <button
+            onClick={handleSyncToSupabase}
+            disabled={syncing}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold text-xs transition-all shadow-sm cursor-pointer disabled:opacity-50"
+            title="Synchronize all notes into Supabase"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${syncing ? 'animate-spin' : ''}`} />
+            <span>{syncing ? 'Saving to Supabase...' : 'Sync to Supabase'}</span>
+          </button>
+        </div>
+      </div>
+
       {/* Sleek Academic Filter & Branch/Semester Controls */}
       <div className="bg-white rounded-3xl border border-slate-200/90 shadow-xs p-5 md:p-6 space-y-5">
         

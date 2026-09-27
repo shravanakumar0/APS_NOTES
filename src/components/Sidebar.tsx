@@ -1,6 +1,6 @@
 import React from 'react';
 import { ActiveTab } from '../types';
-import { UploadCloud, Heart, Bell, ExternalLink, Sparkles } from 'lucide-react';
+import { UploadCloud, Heart, Bell, ExternalLink, Sparkles, BookOpen } from 'lucide-react';
 import { VTU_NOTIFICATIONS } from '../data/apsData';
 
 interface Props {
